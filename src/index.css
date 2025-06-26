@@ -1,0 +1,17 @@
+*{
+  font-size: 20px;
+}
+
+.board-row{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.square{
+  margin: 0;
+  padding: 0;
+  width: 70px;
+  height: 70px;
+  box-sizing: border-box;
+}
