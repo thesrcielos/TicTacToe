@@ -1,6 +1,7 @@
 # React Tic Tac Toe
+This is the React frontend for the real-time two-player Tic Tac Toe game.  
+It connects to a WebSocket backend and allows players to play interactively, view move history, and replay previous steps.
 
-This is a simple implementation of the classic **Tic Tac Toe** game built with **React**. It supports two players (X and O), tracks game history, determines the winner, and detects draws.
 
 ## Getting Started
 

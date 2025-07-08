@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 function Square({ value, onSquareClick }) {
   return (
@@ -8,82 +8,112 @@ function Square({ value, onSquareClick }) {
   );
 }
 
-function Board({ xIsNext, squares, onPlay, movements, setMovements }) {
-    
-  function handleClick(i) {
-    if (movements === 9 || calculateWinner(squares) || squares[i]) {
-      return;
-    }
-    setMovements(movements + 1);
-    const nextSquares = squares.slice();
-    if (xIsNext) {
-      nextSquares[i] = 'X';
-    } else {
-      nextSquares[i] = 'O';
-    }
-    onPlay(nextSquares);
-  }
-
-  const winner = calculateWinner(squares);
-  let status;
-  if (winner) {
-    status = 'Winner: ' + winner;
-  } else {
-    status = movements < 9 ? 'Next player: ' + (xIsNext ? 'X' : 'O'): "It's a tie";
-  }
-
+function Board({ squares, onSquareClick, status }) {
   return (
     <>
       <div className="status">{status}</div>
-      <div className="board-row">
-        <Square value={squares[0]} onSquareClick={() => handleClick(0)} />
-        <Square value={squares[1]} onSquareClick={() => handleClick(1)} />
-        <Square value={squares[2]} onSquareClick={() => handleClick(2)} />
-      </div>
-      <div className="board-row">
-        <Square value={squares[3]} onSquareClick={() => handleClick(3)} />
-        <Square value={squares[4]} onSquareClick={() => handleClick(4)} />
-        <Square value={squares[5]} onSquareClick={() => handleClick(5)} />
-      </div>
-      <div className="board-row">
-        <Square value={squares[6]} onSquareClick={() => handleClick(6)} />
-        <Square value={squares[7]} onSquareClick={() => handleClick(7)} />
-        <Square value={squares[8]} onSquareClick={() => handleClick(8)} />
-      </div>
+      {[0, 1, 2].map(row => (
+        <div className="board-row" key={row}>
+          {[0, 1, 2].map(col => {
+            const index = row * 3 + col;
+            return (
+              <Square
+                key={index}
+                value={squares[index]}
+                onSquareClick={() => onSquareClick(row, col, index)}
+              />
+            );
+          })}
+        </div>
+      ))}
     </>
   );
 }
 
 export default function Game() {
-  const [history, setHistory] = useState([Array(9).fill(null)]);
-  const [currentMove, setCurrentMove] = useState(0);
-  const [movements, setMovements] = useState(0)
-  const xIsNext = currentMove % 2 === 0;
-  const currentSquares = history[currentMove];
+  const [squares, setSquares] = useState(Array(9).fill(null));
+  const [player, setPlayer] = useState(null);
+  const [turn, setTurn] = useState("X");
+  const [status, setStatus] = useState("Waiting for opponent...");
+  const [history, setHistory] = useState([]);
+  const socketRef = useRef(null);
 
-  function handlePlay(nextSquares) {
-    const nextHistory = [...history.slice(0, currentMove + 1), nextSquares];
-    setHistory(nextHistory);
-    setCurrentMove(nextHistory.length - 1);
-  }
+  useEffect(() => {
+    const socket = new WebSocket("wss://tictactoeback-h8f8akbugkcfbqdx.canadacentral-01.azurewebsites.net/bbService");
+    socketRef.current = socket;
 
-  function jumpTo(nextMove) {
-    if(nextMove == 0){
-        setMovements(0);
+    socket.onopen = () => {
+      console.log("Connected to WebSocket");
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.playerTurn) {
+          if (data.playerTurn.includes("X")) setPlayer("X");
+          if (data.playerTurn.includes("O")) setPlayer("O");
+        }else if(data.turn){
+          setTurn(data.turn);
+        } else if(data.board){
+          const flat = data.board.flat();
+          setSquares(flat);
+          setHistory(prev => {
+            const updated = prev.slice(0, data.step + 1);
+            updated[data.step] = flat;
+            return updated;
+          });
+        }
+        else if (Array.isArray(data)) {
+          const flat = data.flat();
+          setSquares(flat);
+          setHistory(prev => [...prev, flat]);
+        } else if (data.error) {
+          alert(data.error);
+        }
+      } catch (err) {
+        console.error("Invalid message from server:", event.data);
+      }
+    };
+
+    return () => socket.close();
+  }, []);
+
+  function handleSquareClick(row, col, index) {
+    if (!player || status.includes("Winner") || status.includes("tie")) return;
+    if (squares[index] !== null) return;
+    if (turn !== player) {
+      alert("Not your turn!");
+      return;
     }
-    setCurrentMove(nextMove);
+
+    socketRef.current?.send(
+      JSON.stringify({ row, col, player })
+    );
+    setTurn(player === "X" ? "O" : "X");
   }
 
-  const moves = history.map((squares, move) => {
-    let description;
-    if (move > 0) {
-      description = 'Go to move #' + move;
+  function jumpTo(move) {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ stepBack: move }));
+    }
+  }
+
+  useEffect(() => {
+    const winner = calculateWinner(squares);
+    if (winner) {
+      setStatus(`Winner: ${winner}`);
+    } else if (squares.every(sq => sq !== null)) {
+      setStatus("It's a tie");
     } else {
-      description = 'Go to game start';
+      setStatus(`Next player: ${turn}`);
     }
+  }, [squares, turn]);
+
+  const moves = history.map((board, move) => {
+    const desc = move === 0 ? "Go to start" : `Go to move #${move}`;
     return (
       <li key={move}>
-        <button onClick={() => jumpTo(move)}>{description}</button>
+        <button onClick={() => jumpTo(move)}>{desc}</button>
       </li>
     );
   });
@@ -91,9 +121,10 @@ export default function Game() {
   return (
     <div className="game">
       <div className="game-board">
-        <Board xIsNext={xIsNext} squares={currentSquares} onPlay={handlePlay} movements={movements} setMovements={setMovements} />
+        <Board squares={squares} onSquareClick={handleSquareClick} status={status} />
       </div>
       <div className="game-info">
+        <div>You are: {player ?? "..."}</div>
         <ol>{moves}</ol>
       </div>
     </div>
@@ -102,18 +133,12 @@ export default function Game() {
 
 function calculateWinner(squares) {
   const lines = [
-    [0, 1, 2],
-    [3, 4, 5],
-    [6, 7, 8],
-    [0, 3, 6],
-    [1, 4, 7],
-    [2, 5, 8],
-    [0, 4, 8],
-    [2, 4, 6],
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6]
   ];
-  for (let i = 0; i < lines.length; i++) {
-    const [a, b, c] = lines[i];
-    if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
+  for (let [a, b, c] of lines) {
+    if (squares[a] && squares[a] === squares[b] && squares[b] === squares[c]) {
       return squares[a];
     }
   }
